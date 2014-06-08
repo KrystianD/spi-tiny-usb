@@ -1,0 +1,3 @@
+[submodule "stm32-utils"]
+	path = stm32-utils
+	url = git@github.com:KrystianD/stm32-utils.git
