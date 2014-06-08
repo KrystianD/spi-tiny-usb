@@ -146,12 +146,6 @@ out:
 	return ret;
 }
 
-/* This is the actual algorithm we define */
-static const struct i2c_algorithm usb_algorithm = {
-	.master_xfer	= usb_xfer,
-	.functionality	= usb_func,
-};
-
 /* ----- end of i2c layer ------------------------------------------------ */
 
 /* ----- begin of usb layer ---------------------------------------------- */
@@ -174,6 +168,8 @@ struct spi_tiny_usb {
 	struct usb_interface *interface; /* the interface for this device */
 	struct i2c_adapter adapter; /* i2c related things */
 	struct spi_master *master; /* i2c related things */
+	struct spi_device *spidev;
+	struct spi_board_info	info;
 };
 
 static int usb_read(struct i2c_adapter *adapter, int cmd,
@@ -204,11 +200,111 @@ static void i2c_tiny_usb_free(struct spi_tiny_usb *dev)
 	kfree(dev);
 }
 
+
+static int spi_tiny_usb_setup(struct spi_device *spi)
+{
+	unsigned int i;
+	unsigned long flags;
+
+
+	dev_dbg(&spi->dev, "spi_tiny_usb_setup\n");
+	// spin_lock_irqsave(&ebu_lock, flags);
+
+	// if (spi->max_speed_hz >= CLOCK_100M) {
+		// /* set EBU clock to 100 MHz */
+		// ltq_sys1_w32_mask(0, EBUCC_EBUDIV_SELF100, EBUCC);
+		// i = 1; /* divider */
+	// } else {
+		// /* set EBU clock to 50 MHz */
+		// ltq_sys1_w32_mask(EBUCC_EBUDIV_SELF100, 0, EBUCC);
+
+		// /* search for suitable divider */
+		// for (i = 1; i < 7; i++) {
+			// if (CLOCK_50M / i <= spi->max_speed_hz)
+				// break;
+		// }
+	// }
+
+	// /* setup period of serial clock */
+	// ltq_ebu_w32_mask(SFTIME_SCKF_POS_MASK
+		     // | SFTIME_SCKR_POS_MASK
+		     // | SFTIME_SCK_PER_MASK,
+		     // (i << SFTIME_SCKR_POS_OFFSET)
+		     // | (i << (SFTIME_SCK_PER_OFFSET + 1)),
+		     // SFTIME);
+
+	// /*
+	 // * set some bits of unused_wd, to not trigger HOLD/WP
+	 // * signals on non QUAD flashes
+	 // */
+	// ltq_ebu_w32((SFIO_UNUSED_WD_MASK & (0x8 | 0x4)), SFIO);
+
+	// ltq_ebu_w32(BUSRCON0_AGEN_SERIAL_FLASH | BUSRCON0_PORTW_8_BIT_MUX,
+			// BUSRCON0);
+	// ltq_ebu_w32(BUSWCON0_AGEN_SERIAL_FLASH, BUSWCON0);
+	// /* set address wrap around to maximum for 24-bit addresses */
+	// ltq_ebu_w32_mask(SFCON_DEV_SIZE_MASK, SFCON_DEV_SIZE_A23_0, SFCON);
+
+	// spin_unlock_irqrestore(&ebu_lock, flags);
+
+	return 0;
+}
+
+static int spi_tiny_usb_prepare_xfer(struct spi_master *master)
+{
+	dev_dbg(&master->dev, "spi_tiny_usb_prepare_xfer\n");
+	return 0;
+}
+
+static int spi_tiny_usb_unprepare_xfer(struct spi_master *master)
+{
+	dev_dbg(&master->dev, "spi_tiny_usb_prepare_xfer\n");
+	return 0;
+}
+
+static int spi_tiny_usb_xfer_one(struct spi_master *master,
+					struct spi_message *m)
+{
+	struct spi_tiny_usb *priv = spi_master_get_devdata(master);
+	struct spi_transfer *t;
+	unsigned long spi_flags;
+	unsigned long flags;
+	int ret = 0;
+
+	dev_dbg(&master->dev, "spi_tiny_usb_xfer_one\n");
+	// priv->sfcmd = 0;
+	// m->actual_length = 0;
+
+	// spi_flags = FALCON_SPI_XFER_BEGIN;
+	// list_for_each_entry(t, &m->transfers, transfer_list) {
+		// if (list_is_last(&t->transfer_list, &m->transfers))
+			// spi_flags |= FALCON_SPI_XFER_END;
+
+		// spin_lock_irqsave(&ebu_lock, flags);
+		// ret = spi_tiny_usb_xfer(m->spi, t, spi_flags);
+		// spin_unlock_irqrestore(&ebu_lock, flags);
+
+		// if (ret)
+			// break;
+
+		// m->actual_length += t->len;
+
+		// WARN_ON(t->delay_usecs || t->cs_change);
+		// spi_flags = 0;
+	// }
+
+	m->status = 0;
+	spi_finalize_current_message(master);
+
+	return 0;
+}
+
 static int spi_tiny_usb_probe(struct usb_interface *interface,
 			      const struct usb_device_id *id)
 {
 	struct spi_tiny_usb *dev;
 	int retval = -ENOMEM;
+	int ret;
 	u16 version;
 
 	dev_dbg(&interface->dev, "probing usb device\n");
@@ -263,17 +359,31 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 
 	dev->master->mode_bits = SPI_MODE_3;
 	dev->master->flags = SPI_MASTER_HALF_DUPLEX;
-	dev->master->setup = falcon_sflash_setup;
-	dev->master->prepare_transfer_hardware = falcon_sflash_prepare_xfer;
-	dev->master->transfer_one_message = falcon_sflash_xfer_one;
-	dev->master->unprepare_transfer_hardware = falcon_sflash_unprepare_xfer;
-	dev->master->dev.of_node = pdev->dev.of_node;
+	dev->master->setup = spi_tiny_usb_setup;
+	dev->master->prepare_transfer_hardware = spi_tiny_usb_prepare_xfer;
+	dev->master->transfer_one_message = spi_tiny_usb_xfer_one;
+	dev->master->unprepare_transfer_hardware = spi_tiny_usb_unprepare_xfer;
+	dev->master->dev.of_node = interface->dev.of_node;
+	dev->master->num_chipselect = 1;
 
-	platform_set_drvdata(pdev, priv);
-
-	ret = devm_spi_register_master(&pdev->dev, master);
+	ret = devm_spi_register_master(&interface->dev, dev->master);
 	if (ret)
-		spi_master_put(master);
+		spi_master_put(dev->master);
+
+	dev_dbg(&interface->dev, "reg %d\n", ret);
+
+	strcpy(dev->info.modalias, "spidev");
+	dev->info.max_speed_hz = 6 * 1000 * 1000;
+	dev->info.chip_select = 0;
+	dev->info.mode = SPI_MODE_1;
+
+	dev->info.controller_data = dev;
+	dev->spidev = spi_new_device(dev->master, &dev->info);
+	dev_dbg(&interface->dev, "reg2 %p\n", dev->spidev);
+	dev->info.chip_select = 1;
+	dev->spidev = spi_new_device(dev->master, &dev->info);
+
+	dev_dbg(&interface->dev, "reg2 %p\n", dev->spidev);
 
 	return 0;
 
@@ -289,8 +399,6 @@ static void spi_tiny_usb_disconnect(struct usb_interface *interface)
 	struct spi_tiny_usb *dev = usb_get_intfdata(interface);
 
 	dev_dbg(&interface->dev, "test\n");
-	if (dev->master)
-		kfree(dev->master);
 	usb_set_intfdata(interface, NULL);
 	i2c_tiny_usb_free(dev);
 
