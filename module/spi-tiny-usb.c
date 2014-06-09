@@ -278,6 +278,7 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 
 	dev_info(&interface->dev, "connected spi-tiny-usb device\n");
 
+	// SPI master
 	priv->master = spi_alloc_master(&interface->dev, sizeof(*priv));
 	if (!priv->master)
 		goto error;
@@ -294,7 +295,7 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 	// priv->master->dev.platform_data = priv;
 	spi_master_set_devdata(priv->master, priv);
 
-	ret = devm_spi_register_master(&interface->dev, priv->master);
+	ret = spi_register_master(priv->master);
 	if (ret)
 		goto error2;
 
@@ -408,6 +409,9 @@ static void spi_tiny_usb_disconnect(struct usb_interface *interface)
 	dev_dbg(&interface->dev, "usb_free_urb\n");
 	if (priv->urb)
 		usb_free_urb(priv->urb);
+
+	dev_dbg(&interface->dev, "spi_unregister_master\n");
+	spi_unregister_master(priv->master);
 
 	dev_dbg(&interface->dev, "spi_tiny_usb_free\n");
 	usb_set_intfdata(interface, NULL);
