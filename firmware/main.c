@@ -8,6 +8,8 @@
 #define FLAGS_BEGIN 1
 #define FLAGS_END   2
 
+#define SPI_FLAGS (SPI_CR1_MSTR | SPI_CR1_SPE | SPI_CR1_SSM | SPI_CR1_SSI)
+
 volatile uint32_t ticks = 0;
 
 void myputchar(int c)
@@ -54,7 +56,6 @@ void main()
 	
 	// Enable SPI
 	RCC->SPI_SPI_APB |= SPI_SPI_APBEN;
-	SPI_SPI->CR1 = (SPI_DIV) | SPI_CR1_MSTR | SPI_CR1_SPE | SPI_CR1_SSM | SPI_CR1_SSI;
 	IO_PUSH_PULL(SPI_CE);
 	IO_ALT_PUSH_PULL(SPI_SCK);
 	IO_ALT_PUSH_PULL(SPI_MOSI);
@@ -113,11 +114,7 @@ uint16_t usbFunctionSetup()
 {
 	uint8_t reg, len, i;
 	
-	myprintf("%d %d %d %d\r\n",
-	         usbRequest.bRequest,
-	         usbRequest.wValue.word,
-	         usbRequest.wIndex.word,
-	         usbRequest.wLength);
+	// myprintf("%d %d %d %d\r\n", usbRequest.bRequest, usbRequest.wValue.word, usbRequest.wIndex.word, usbRequest.wLength);
 	         
 	switch (usbRequest.bRequest)
 	{
@@ -132,12 +129,13 @@ uint16_t usbFunctionSetup()
 }
 void usbHandleData(uint8_t size)
 {
-	uint8_t reg, len, i;
+	uint8_t reg, len, i, speed;
 	
 	switch (usbRequest.bRequest)
 	{
 	case 0:
-	
+		speed = (usbRequest.wIndex.word >> 2) & 0x07;
+		SPI_SPI->CR1 = SPI_FLAGS | (speed << 3);
 		if (usbRequest.wIndex.word & FLAGS_BEGIN)
 			enableSPI();
 		for (i = 0; i < size; i++)
@@ -148,7 +146,7 @@ void usbHandleData(uint8_t size)
 		if (usbRequest.wIndex.word & FLAGS_END)
 			disableSPI();
 		
-		myprintf("new pac2: %d %d\r\n", size, total);
+		// myprintf("new pac2: %d %d\r\n", size, total);
 		break;
 	}
 }

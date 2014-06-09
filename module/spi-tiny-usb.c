@@ -20,22 +20,10 @@
 /* include interfaces to usb layer */
 #include <linux/usb.h>
 
-/* include interface to i2c layer */
-#include <linux/i2c.h>
 #include <linux/spi/spi.h>
 #include <linux/uio_driver.h>
 
 #include "../config.h"
-
-/* commands via USB, must match command ids in the firmware */
-#define CMD_ECHO		0
-#define CMD_GET_FUNC		1
-#define CMD_SET_DELAY		2
-#define CMD_GET_STATUS		3
-
-#define CMD_I2C_IO		4
-#define CMD_I2C_IO_BEGIN	(1<<0)
-#define CMD_I2C_IO_END		(1<<1)
 
 #define FLAGS_BEGIN 1
 #define FLAGS_END   2
@@ -46,116 +34,11 @@ static int usb_read(struct spi_master *master, int cmd, int value, int index,
 static int usb_write(struct spi_master *master, int cmd, int value,
 		     int index, void *data, int len);
 
-/* ----- begin of i2c layer ---------------------------------------------- */
-
-// #define STATUS_IDLE    0
-// #define STATUS_ADDRESS_ACK 1
-// #define STATUS_ADDRESS_NAK 2
-
-// static int usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, int num)
-// {
-	// unsigned char *pstatus;
-	// struct i2c_msg *pmsg;
-	// int i, ret;
-
-	// dev_dbg(&adapter->dev, "master xfer %d messages:\n", num);
-
-	// pstatus = kmalloc(sizeof(*pstatus), GFP_KERNEL);
-	// if (!pstatus)
-		// return -ENOMEM;
-
-	// for (i = 0 ; i < num ; i++) {
-		// int cmd = CMD_I2C_IO;
-
-		// if (i == 0)
-			// cmd |= CMD_I2C_IO_BEGIN;
-
-		// if (i == num-1)
-			// cmd |= CMD_I2C_IO_END;
-
-		// pmsg = &msgs[i];
-
-		// dev_dbg(&adapter->dev,
-			// "  %d: %s (flags %d) %d bytes to 0x%02x\n",
-			// i, pmsg->flags & I2C_M_RD ? "read" : "write",
-			// pmsg->flags, pmsg->len, pmsg->addr);
-
-		// /* and directly send the message */
-		// if (pmsg->flags & I2C_M_RD) {
-			// /* read data */
-			// if (usb_read(adapter, cmd,
-						 // pmsg->flags, pmsg->addr,
-						 // pmsg->buf, pmsg->len) != pmsg->len) {
-				// dev_err(&adapter->dev,
-					// "failure reading data\n");
-				// ret = -EREMOTEIO;
-				// goto out;
-			// }
-		// } else {
-			// /* write data */
-			// if (usb_write(adapter, cmd,
-							// pmsg->flags, pmsg->addr,
-							// pmsg->buf, pmsg->len) != pmsg->len) {
-				// dev_err(&adapter->dev,
-					// "failure writing data\n");
-				// ret = -EREMOTEIO;
-				// goto out;
-			// }
-		// }
-
-		// /* read status */
-		// if (usb_read(adapter, CMD_GET_STATUS, 0, 0, pstatus, 1) != 1) {
-			// dev_err(&adapter->dev, "failure reading status\n");
-			// ret = -EREMOTEIO;
-			// goto out;
-		// }
-
-		// dev_dbg(&adapter->dev, "  status = %d\n", *pstatus);
-		// if (*pstatus == STATUS_ADDRESS_NAK) {
-			// ret = -EREMOTEIO;
-			// goto out;
-		// }
-	// }
-
-	// ret = i;
-// out:
-	// kfree(pstatus);
-	// return ret;
-// }
-
-// static u32 usb_func(struct i2c_adapter *adapter)
-// {
-	// __le32 *pfunc;
-	// u32 ret;
-
-	// pfunc = kmalloc(sizeof(*pfunc), GFP_KERNEL);
-
-	// /* get functionality from adapter */
-	// if (!pfunc || usb_read(adapter, CMD_GET_FUNC, 0, 0, pfunc,
-						 // sizeof(*pfunc)) != sizeof(*pfunc)) {
-		// dev_err(&adapter->dev, "failure reading functionality\n");
-		// ret = 0;
-		// goto out;
-	// }
-
-	// ret = le32_to_cpup(pfunc);
-// out:
-	// kfree(pfunc);
-	// return ret;
-// }
-
-/* ----- end of i2c layer ------------------------------------------------ */
-
 /* ----- begin of usb layer ---------------------------------------------- */
 
-/*
- * Initially the usb i2c interface uses a vid/pid pair donated by
- * Future Technology Devices International Ltd., later a pair was
- * bought from EZPrototypes
- */
 static const struct usb_device_id spi_tiny_usb_table[] = {
-	{USB_DEVICE(VID, PID)},	/* spi-tiny-usb */
-	{}			/* Terminating entry */
+	{USB_DEVICE(VID, PID)},
+	{}
 };
 
 MODULE_DEVICE_TABLE(usb, spi_tiny_usb_table);
@@ -164,8 +47,7 @@ MODULE_DEVICE_TABLE(usb, spi_tiny_usb_table);
 struct spi_tiny_usb {
 	struct usb_device *usb_dev;	/* the usb device for this device */
 	struct usb_interface *interface;	/* the interface for this device */
-	struct i2c_adapter adapter;	/* i2c related things */
-	struct spi_master *master;	/* i2c related things */
+	struct spi_master *master;	/* spi master related things */
 	struct spi_device *spidev;
 	struct spi_board_info info;
 	struct uio_info *uio;
@@ -222,12 +104,22 @@ static int spi_tiny_usb_unprepare_xfer(struct spi_master *master)
 	return 0;
 }
 
+static int spi_tiny_usb_freqtodiv(int freq)
+{
+	int div = 48 * 1000 * 1000 / freq;
+	int i, divVal = 0;
+	for (i = 2; i <= 256; i *= 2, divVal++)
+		if (i >= div)
+			break;
+	return divVal;
+}
+
 static int
 spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *m)
 {
-	struct spi_tiny_usb *priv = spi_master_get_devdata(master);
+	// struct spi_tiny_usb *priv = spi_master_get_devdata(master);
 	struct spi_transfer *t;
-	unsigned long spi_flags;
+	int spi_flags;
 	int ret = 0;
 
 	dev_dbg(&master->dev, "spi_tiny_usb_xfer_one\n");
@@ -237,6 +129,8 @@ spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *m)
 	list_for_each_entry(t, &m->transfers, transfer_list) {
 		if (list_is_last(&t->transfer_list, &m->transfers))
 			spi_flags |= FLAGS_END;
+
+		spi_flags |= spi_tiny_usb_freqtodiv(t->speed_hz) << 2;
 
 		dev_dbg(&master->dev, "%p %p %d %d len: %d speed: %d flags: %d\n",
 			t->tx_buf, t->rx_buf, t->tx_nbits, t->rx_nbits, t->len,
@@ -279,10 +173,6 @@ static int spi_tiny_usb_irqcontrol(struct uio_info *info, s32 irq_on)
 {
 	struct spi_tiny_usb *priv = (struct spi_tiny_usb *)info->priv;
 	dev_dbg(&priv->interface->dev, "spi_tiny_usb_irqcontrol\n");
-	// if (irq_on == 0)
-	// mf624_disable_interrupt(ALL, info);
-	// else if (irq_on == 1)
-	// mf624_enable_interrupt(ALL, info);
 	return 0;
 }
 
@@ -320,23 +210,23 @@ spi_tiny_usb_probe(struct usb_interface *interface,
 	if (!priv->master)
 		goto error;
 	priv->master->mode_bits = SPI_MODE_0;
-	priv->master->flags = 0;	//SPI_MASTER_HALF_DUPLEX;
+	priv->master->flags = 0;
 	priv->master->setup = spi_tiny_usb_setup;
 	priv->master->prepare_transfer_hardware = spi_tiny_usb_prepare_xfer;
 	priv->master->transfer_one_message = spi_tiny_usb_xfer_one;
 	priv->master->unprepare_transfer_hardware = spi_tiny_usb_unprepare_xfer;
 	priv->master->dev.of_node = interface->dev.of_node;
 	priv->master->num_chipselect = 1;
+	priv->master->max_speed_hz = 48 * 1000 * 1000 / 2;
+	priv->master->min_speed_hz = 48 * 1000 * 1000 / 256;
 	priv->master->dev.platform_data = priv;
 
 	ret = devm_spi_register_master(&interface->dev, priv->master);
 	if (ret)
 		goto error2;
 
-	dev_dbg(&interface->dev, "reg %d\n", ret);
-
 	strcpy(priv->info.modalias, "spidev");
-	priv->info.max_speed_hz = 6 * 1000 * 1000;
+	priv->info.max_speed_hz = 48 * 1000 * 1000 / 2;
 	priv->info.chip_select = 0;
 	priv->info.mode = SPI_MODE_0;
 
@@ -344,8 +234,6 @@ spi_tiny_usb_probe(struct usb_interface *interface,
 	priv->spidev = spi_new_device(priv->master, &priv->info);
 	if (!priv->spidev)
 		goto error2;
-
-	dev_dbg(&interface->dev, "reg2 %p\n", priv->spidev);
 
 	// UIO
 	priv->uio = kzalloc(sizeof(struct uio_info), GFP_KERNEL);
