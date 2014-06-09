@@ -37,14 +37,14 @@
 #define CMD_I2C_IO_BEGIN	(1<<0)
 #define CMD_I2C_IO_END		(1<<1)
 
-#define FLAGS_BEGIN 0
-#define FLAGS_END 0
+#define FLAGS_BEGIN 1
+#define FLAGS_END   2
 
 static int usb_read(struct spi_master *master, int cmd, int value, int index,
-										void *data, int len);
+		    void *data, int len);
 
-static int usb_write(struct spi_master *master, int cmd, int value, int index,
-										 void *data, int len);
+static int usb_write(struct spi_master *master, int cmd, int value,
+		     int index, void *data, int len);
 
 /* ----- begin of i2c layer ---------------------------------------------- */
 
@@ -154,44 +154,48 @@ static int usb_write(struct spi_master *master, int cmd, int value, int index,
  * bought from EZPrototypes
  */
 static const struct usb_device_id spi_tiny_usb_table[] = {
-	{USB_DEVICE(VID, PID)},				/* spi-tiny-usb */
-	{}														/* Terminating entry */
+	{USB_DEVICE(VID, PID)},	/* spi-tiny-usb */
+	{}			/* Terminating entry */
 };
 
 MODULE_DEVICE_TABLE(usb, spi_tiny_usb_table);
 
 /* Structure to hold all of our device specific stuff */
-struct spi_tiny_usb
-{
-	struct usb_device *usb_dev;		/* the usb device for this device */
+struct spi_tiny_usb {
+	struct usb_device *usb_dev;	/* the usb device for this device */
 	struct usb_interface *interface;	/* the interface for this device */
-	struct i2c_adapter adapter;		/* i2c related things */
-	struct spi_master *master;		/* i2c related things */
+	struct i2c_adapter adapter;	/* i2c related things */
+	struct spi_master *master;	/* i2c related things */
 	struct spi_device *spidev;
 	struct spi_board_info info;
 	struct uio_info *uio;
 };
 
-static int usb_read(struct spi_master *master, int cmd, int value, int index,
-										void *data, int len)
+static int
+usb_read(struct spi_master *master, int cmd, int value, int index,
+	 void *data, int len)
 {
-	struct spi_tiny_usb *dev = (struct spi_tiny_usb *)master->dev.platform_data;
+	struct spi_tiny_usb *dev =
+	    (struct spi_tiny_usb *)master->dev.platform_data;
 
 	/* do control transfer */
-	return usb_control_msg(dev->usb_dev, usb_rcvctrlpipe(dev->usb_dev, 0), cmd,
-												 USB_TYPE_VENDOR | USB_RECIP_INTERFACE | USB_DIR_IN,
-												 value, index, data, len, 2000);
+	return usb_control_msg(dev->usb_dev, usb_rcvctrlpipe(dev->usb_dev, 0),
+			       cmd,
+			       USB_TYPE_VENDOR | USB_RECIP_INTERFACE |
+			       USB_DIR_IN, value, index, data, len, 2000);
 }
 
-static int usb_write(struct spi_master *master, int cmd, int value, int index,
-										 void *data, int len)
+static int
+usb_write(struct spi_master *master, int cmd, int value, int index,
+	  void *data, int len)
 {
-	struct spi_tiny_usb *dev = (struct spi_tiny_usb *)master->dev.platform_data;
+	struct spi_tiny_usb *dev =
+	    (struct spi_tiny_usb *)master->dev.platform_data;
 
 	/* do control transfer */
-	return usb_control_msg(dev->usb_dev, usb_sndctrlpipe(dev->usb_dev, 0), cmd,
-												 USB_TYPE_VENDOR | USB_RECIP_INTERFACE, value, index,
-												 data, len, 2000);
+	return usb_control_msg(dev->usb_dev, usb_sndctrlpipe(dev->usb_dev, 0),
+			       cmd, USB_TYPE_VENDOR | USB_RECIP_INTERFACE,
+			       value, index, data, len, 2000);
 }
 
 static void spi_tiny_usb_free(struct spi_tiny_usb *dev)
@@ -218,39 +222,34 @@ static int spi_tiny_usb_unprepare_xfer(struct spi_master *master)
 	return 0;
 }
 
-static int spi_tiny_usb_xfer_one(struct spi_master *master,
-																 struct spi_message *m)
+static int
+spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *m)
 {
-	// struct spi_tiny_usb *priv = spi_master_get_devdata(master);
+	struct spi_tiny_usb *priv = spi_master_get_devdata(master);
 	struct spi_transfer *t;
-	// unsigned long spi_flags;
-	// unsigned long flags;
+	unsigned long spi_flags;
 	int ret = 0;
 
 	dev_dbg(&master->dev, "spi_tiny_usb_xfer_one\n");
-	// priv->sfcmd = 0;
 	m->actual_length = 0;
 
-	// spi_flags = FALCON_SPI_XFER_BEGIN;
-	list_for_each_entry(t, &m->transfers, transfer_list)
-	{
-		// if (list_is_last(&t->transfer_list, &m->transfers))
-		// spi_flags |= FALCON_SPI_XFER_END;
+	spi_flags = FLAGS_BEGIN;
+	list_for_each_entry(t, &m->transfers, transfer_list) {
+		if (list_is_last(&t->transfer_list, &m->transfers))
+			spi_flags |= FLAGS_END;
 
-		dev_dbg(&master->dev, "%p %p %d %d len: %d\n", t->tx_buf, t->rx_buf,
-						t->tx_nbits, t->rx_nbits, t->len);
+		dev_dbg(&master->dev, "%p %p %d %d len: %d speed: %d flags: %d\n",
+			t->tx_buf, t->rx_buf, t->tx_nbits, t->rx_nbits, t->len,
+			t->speed_hz, spi_flags);
 
-		if (t->tx_buf)
-		{
-			usb_write(master, 0, 0, 0, (void *)t->tx_buf, t->len);
-		}
-		else
-		{
+		if (t->tx_buf) {
+			usb_write(master, 0, 0, spi_flags, (void *)t->tx_buf, t->len);
+		} else {
 			void *txbuf = kmalloc(t->len, GFP_KERNEL);
 			memset(txbuf, 0xff, t->len);
 			if (!txbuf)
 				return 1;
-			usb_write(master, 0, 0, 0, txbuf, t->len);
+			usb_write(master, 0, 0, spi_flags, txbuf, t->len);
 			kfree(txbuf);
 		}
 
@@ -267,7 +266,7 @@ static int spi_tiny_usb_xfer_one(struct spi_master *master,
 		m->actual_length += t->len;
 
 		WARN_ON(t->delay_usecs || t->cs_change);
-		// spi_flags = 0;
+		spi_flags = 0;
 	}
 
 	m->status = ret;
@@ -279,17 +278,17 @@ static int spi_tiny_usb_xfer_one(struct spi_master *master,
 static int spi_tiny_usb_irqcontrol(struct uio_info *info, s32 irq_on)
 {
 	struct spi_tiny_usb *priv = (struct spi_tiny_usb *)info->priv;
-	dev_dbg(&info->dev, "spi_tiny_usb_xfer_one\n");
+	dev_dbg(&priv->interface->dev, "spi_tiny_usb_irqcontrol\n");
 	// if (irq_on == 0)
-		// mf624_disable_interrupt(ALL, info);
+	// mf624_disable_interrupt(ALL, info);
 	// else if (irq_on == 1)
-		// mf624_enable_interrupt(ALL, info);
-
+	// mf624_enable_interrupt(ALL, info);
 	return 0;
 }
 
-static int spi_tiny_usb_probe(struct usb_interface *interface,
-															const struct usb_device_id *id)
+static int
+spi_tiny_usb_probe(struct usb_interface *interface,
+		   const struct usb_device_id *id)
 {
 	struct spi_tiny_usb *priv;
 	int retval = -ENOMEM;
@@ -303,10 +302,6 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 	if (priv == NULL)
 		return -ENOMEM;
 
-
-
-	priv->master = 0;
-
 	priv->usb_dev = usb_get_dev(interface_to_usbdev(interface));
 	priv->interface = interface;
 
@@ -314,18 +309,18 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 	usb_set_intfdata(interface, priv);
 
 	version = le16_to_cpu(priv->usb_dev->descriptor.bcdDevice);
-	dev_info(&interface->dev, "version %x.%02x found at bus %03d address %03d\n",
-					 version >> 8, version & 0xff, priv->usb_dev->bus->busnum,
-					 priv->usb_dev->devnum);
-
+	dev_info(&interface->dev,
+		 "version %x.%02x found at bus %03d address %03d\n",
+		 version >> 8, version & 0xff, priv->usb_dev->bus->busnum,
+		 priv->usb_dev->devnum);
 
 	dev_info(&interface->dev, "connected spi-tiny-usb device\n");
 
 	priv->master = spi_alloc_master(&interface->dev, sizeof(*priv));
 	if (!priv->master)
-		return -ENOMEM;
+		goto error;
 	priv->master->mode_bits = SPI_MODE_0;
-	priv->master->flags = 0;			//SPI_MASTER_HALF_DUPLEX;
+	priv->master->flags = 0;	//SPI_MASTER_HALF_DUPLEX;
 	priv->master->setup = spi_tiny_usb_setup;
 	priv->master->prepare_transfer_hardware = spi_tiny_usb_prepare_xfer;
 	priv->master->transfer_one_message = spi_tiny_usb_xfer_one;
@@ -355,22 +350,30 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 	// UIO
 	priv->uio = kzalloc(sizeof(struct uio_info), GFP_KERNEL);
 	if (!priv->uio)
-		return -ENOMEM;
+		goto error2;
 	priv->uio->priv = priv;
+	priv->uio->name = "kd";
+	priv->uio->version = "1.0.0";
+
+	priv->uio->mem[0].size = 0;
+	priv->uio->port[0].size = 0;
+
 	priv->uio->irq = UIO_IRQ_CUSTOM;
 	priv->uio->irq_flags = IRQF_SHARED;
-	priv->uio->handler = 0;
-	priv->uio->irqcontrol = 0;
+	priv->uio->irqcontrol = spi_tiny_usb_irqcontrol;
 
 	if (uio_register_device(&interface->dev, priv->uio))
-		goto error2;
+		goto error3;
 
 	return 0;
 
-error2:
+ error3:
+	kfree(priv->uio);
+
+ error2:
 	spi_master_put(priv->master);
 
-error:
+ error:
 	if (priv)
 		spi_tiny_usb_free(priv);
 

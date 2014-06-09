@@ -5,6 +5,9 @@
 #include <myprintf.h>
 #include <kdusb.h>
 
+#define FLAGS_BEGIN 1
+#define FLAGS_END   2
+
 volatile uint32_t ticks = 0;
 
 void myputchar(int c)
@@ -135,13 +138,15 @@ void usbHandleData(uint8_t size)
 	{
 	case 0:
 	
-		enableSPI();
+		if (usbRequest.wIndex.word & FLAGS_BEGIN)
+			enableSPI();
 		for (i = 0; i < size; i++)
 		{
 			uint8_t d = SPI_RW(inData[i]);
 			data[total++] = d;
 		}
-		disableSPI();
+		if (usbRequest.wIndex.word & FLAGS_END)
+			disableSPI();
 		
 		myprintf("new pac2: %d %d\r\n", size, total);
 		break;
