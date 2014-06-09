@@ -1,4 +1,3 @@
-#define DEBUG
 /*
  * driver for the spi-tiny-usb adapter - 1.0
  *
@@ -16,11 +15,9 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/types.h>
-#include <linux/gpio.h>
 
-/* include interfaces to usb layer */
 #include <linux/usb.h>
-
+#include <linux/gpio.h>
 #include <linux/spi/spi.h>
 #include <linux/uio_driver.h>
 
@@ -37,12 +34,6 @@
 #define FLAGS_END   2
 
 const char *gpio_names[] = { "led", "ext" };
-
-// static int usb_read(struct spi_master *master, int cmd, int value, int index,
-		    // void *data, int len);
-
-// static int usb_write(struct spi_master *master, int cmd, int value,
-		     // int index, void *data, int len);
 
 /* ----- begin of usb layer ---------------------------------------------- */
 
@@ -288,7 +279,8 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 	priv->master->num_chipselect = 1;
 	priv->master->max_speed_hz = 48 * 1000 * 1000 / 2;
 	priv->master->min_speed_hz = 48 * 1000 * 1000 / 256;
-	priv->master->dev.platform_data = priv;
+	// priv->master->dev.platform_data = priv;
+	spi_master_set_devdata(priv->master, priv);
 
 	ret = devm_spi_register_master(&interface->dev, priv->master);
 	if (ret)
@@ -349,10 +341,11 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 	priv->gpio_chip.direction_output = spi_tiny_usb_gpio_output;
 	priv->gpio_chip.get = spi_tiny_usb_gpio_get;
 	priv->gpio_chip.set = spi_tiny_usb_gpio_set;
-	priv->gpio_chip.base = 0;
+	priv->gpio_chip.base = -1;
 	priv->gpio_chip.ngpio = 2;
 	priv->gpio_chip.names = gpio_names;
 
+	dev_dbg(&interface->dev, "adding GPIO interface\n");
 	ret = gpiochip_add(&priv->gpio_chip);
 	if (ret) {
 		printk(KERN_DEBUG "err %d\n", ret);
@@ -377,22 +370,34 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 static void spi_tiny_usb_disconnect(struct usb_interface *interface)
 {
 	struct spi_tiny_usb *priv = usb_get_intfdata(interface);
+	int i, ret;
 
-	gpiochip_remove(&priv->gpio_chip);
+	for (i = priv->gpio_chip.base; i < priv->gpio_chip.base + priv->gpio_chip.ngpio;
+	     i++) {
+		gpio_free(i);
+	}
 
+	dev_dbg(&interface->dev, "gpiochip_remove\n");
+	ret = gpiochip_remove(&priv->gpio_chip);
+
+	dev_dbg(&interface->dev, "usb_kill_urb\n");
 	usb_kill_urb(priv->urb);
 
+	dev_dbg(&interface->dev, "urbBuffer\n");
 	if (priv->urbBuffer)
 		kfree(priv->urbBuffer);
 
+	dev_dbg(&interface->dev, "uio\n");
 	if (priv->uio) {
 		uio_unregister_device(priv->uio);
 		kfree(priv->uio);
 	}
 
+	dev_dbg(&interface->dev, "usb_free_urb\n");
 	if (priv->urb)
 		usb_free_urb(priv->urb);
 
+	dev_dbg(&interface->dev, "spi_tiny_usb_free\n");
 	usb_set_intfdata(interface, NULL);
 	spi_tiny_usb_free(priv);
 
