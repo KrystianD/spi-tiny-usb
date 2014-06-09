@@ -4,6 +4,7 @@
 #include <delay.h>
 #include <myprintf.h>
 #include <kdusb.h>
+#include <linux/gpio.h>
 
 #define FLAGS_BEGIN 1
 #define FLAGS_END   2
@@ -84,7 +85,7 @@ void main()
 		{
 			if (v == 0)
 			{
-				usbSetInterruptData(1, "asd", 4);
+				usbSetInterruptData(1, 0, 0);
 			}
 			lastIRQ = v;
 		}
