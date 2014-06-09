@@ -4,7 +4,13 @@
 #include <delay.h>
 #include <myprintf.h>
 #include <kdusb.h>
-#include <linux/gpio.h>
+
+#define USB_CMD_WRITE       0
+#define USB_CMD_READ        1
+#define USB_CMD_GPIO_OUTPUT 2
+#define USB_CMD_GPIO_INPUT  3
+#define USB_CMD_GPIO_SET    4
+#define USB_CMD_GPIO_GET    5
 
 #define FLAGS_BEGIN 1
 #define FLAGS_END   2
@@ -69,6 +75,9 @@ void main()
 	
 	_delay_init();
 	IO_PUSH_PULL(LED);
+	IO_HIGH(LED);
+	IO_INPUT_PP(GP);
+	IO_HIGH(GP);
 	
 	// Init USB
 	usbInit();
@@ -122,6 +131,7 @@ uint8_t SPI_RW(uint8_t val)
 }
 
 uint8_t data[4 * 1024];
+uint8_t dataGPIO[1];
 uint8_t inData[64];
 volatile int total = 0;
 uint16_t usbFunctionSetup()
@@ -129,16 +139,47 @@ uint16_t usbFunctionSetup()
 	uint8_t reg, len, i;
 	
 	// myprintf("%d %d %d %d\r\n", usbRequest.bRequest, usbRequest.wValue.word, usbRequest.wIndex.word, usbRequest.wLength);
-	         
+	int gpio = usbRequest.wIndex.word;
+	int val = usbRequest.wValue.word;
+
 	switch (usbRequest.bRequest)
 	{
-	case 0:
+	case USB_CMD_WRITE:
 		usbData = inData;
 		total = 0;
 		return 0;
-	case 1:
+	case USB_CMD_READ:
 		usbData = data;
 		return usbRequest.wLength;
+	case USB_CMD_GPIO_OUTPUT:
+		if (gpio == 1)
+		{
+			IO_PUSH_PULL(GP);
+		}
+		return 0;
+	case USB_CMD_GPIO_INPUT:
+		if (gpio == 1)
+		{
+			IO_INPUT_PP(GP);
+			IO_HIGH(GP);
+		}
+		return 0;
+	case USB_CMD_GPIO_SET:
+		switch (gpio)
+		{
+		case 0: if (val) IO_HIGH(LED); else IO_LOW(LED); break;
+		case 1: if (val) IO_HIGH(GP); else IO_LOW(GP); break;
+		}
+		return 0;
+	case USB_CMD_GPIO_GET:
+		switch (gpio)
+		{
+		case 0: val = IO_IS_HIGH(LED); break;
+		case 1: val = IO_IS_HIGH(GP); break;
+		}
+		dataGPIO[0] = val;
+		usbData = dataGPIO;
+		return 1;
 	}
 }
 void usbHandleData(uint8_t size)
@@ -147,7 +188,7 @@ void usbHandleData(uint8_t size)
 	
 	switch (usbRequest.bRequest)
 	{
-	case 0:
+	case USB_CMD_WRITE:
 		speed = (usbRequest.wIndex.word >> 2) & 0x07;
 		SPI_SPI->CR1 = SPI_FLAGS | (speed << 3);
 		if (usbRequest.wIndex.word & FLAGS_BEGIN)

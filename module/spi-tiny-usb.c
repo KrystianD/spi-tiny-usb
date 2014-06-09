@@ -16,6 +16,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+#include <linux/gpio.h>
 
 /* include interfaces to usb layer */
 #include <linux/usb.h>
@@ -25,14 +26,23 @@
 
 #include "../config.h"
 
+#define USB_CMD_WRITE       0
+#define USB_CMD_READ        1
+#define USB_CMD_GPIO_OUTPUT 2
+#define USB_CMD_GPIO_INPUT  3
+#define USB_CMD_GPIO_SET    4
+#define USB_CMD_GPIO_GET    5
+
 #define FLAGS_BEGIN 1
 #define FLAGS_END   2
 
-static int usb_read(struct spi_master *master, int cmd, int value, int index,
-		    void *data, int len);
+const char *gpio_names[] = { "led", "ext" };
 
-static int usb_write(struct spi_master *master, int cmd, int value,
-		     int index, void *data, int len);
+// static int usb_read(struct spi_master *master, int cmd, int value, int index,
+		    // void *data, int len);
+
+// static int usb_write(struct spi_master *master, int cmd, int value,
+		     // int index, void *data, int len);
 
 /* ----- begin of usb layer ---------------------------------------------- */
 
@@ -53,13 +63,12 @@ struct spi_tiny_usb {
 	struct uio_info *uio;
 	struct urb *urb;
 	char *urbBuffer;
+	struct gpio_chip gpio_chip;
 };
 
 static int
-usb_read(struct spi_master *master, int cmd, int value, int index, void *data, int len)
+usb_read(struct spi_tiny_usb *dev, int cmd, int value, int index, void *data, int len)
 {
-	struct spi_tiny_usb *dev = (struct spi_tiny_usb *)master->dev.platform_data;
-
 	/* do control transfer */
 	return usb_control_msg(dev->usb_dev, usb_rcvctrlpipe(dev->usb_dev, 0),
 			       cmd,
@@ -68,10 +77,8 @@ usb_read(struct spi_master *master, int cmd, int value, int index, void *data, i
 }
 
 static int
-usb_write(struct spi_master *master, int cmd, int value, int index, void *data, int len)
+usb_write(struct spi_tiny_usb *dev, int cmd, int value, int index, void *data, int len)
 {
-	struct spi_tiny_usb *dev = (struct spi_tiny_usb *)master->dev.platform_data;
-
 	/* do control transfer */
 	return usb_control_msg(dev->usb_dev, usb_sndctrlpipe(dev->usb_dev, 0),
 			       cmd, USB_TYPE_VENDOR | USB_RECIP_INTERFACE,
@@ -96,7 +103,7 @@ static int spi_tiny_usb_freqtodiv(int freq)
 
 static int spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *m)
 {
-	// struct spi_tiny_usb *priv = spi_master_get_devdata(master);
+	struct spi_tiny_usb *priv = spi_master_get_devdata(master);
 	struct spi_transfer *t;
 	int spi_flags;
 	int ret = 0;
@@ -119,8 +126,7 @@ static int spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *
 			spi_flags |= FLAGS_END;
 
 		if (t->tx_buf) {
-			ret = usb_write(master, 0, 0, spi_flags,
-					(void *)t->tx_buf, t->len);
+			ret = usb_write(priv, 0, 0, spi_flags, (void *)t->tx_buf, t->len);
 			if (ret < 0)
 				break;
 		} else {
@@ -130,14 +136,14 @@ static int spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *
 				ret = -ENOMEM;
 				break;
 			}
-			ret = usb_write(master, 0, 0, spi_flags, txbuf, t->len);
+			ret = usb_write(priv, 0, 0, spi_flags, txbuf, t->len);
 			kfree(txbuf);
 			if (ret < 0)
 				break;
 		}
 
 		if (t->rx_buf) {
-			ret = usb_read(master, 1, 0, 0, t->rx_buf, t->len);
+			ret = usb_read(priv, 1, 0, 0, t->rx_buf, t->len);
 			if (ret < 0)
 				break;
 		}
@@ -183,6 +189,62 @@ static void spi_tiny_usb_urb_complete(struct urb *urb)
 	}
 
 	ret = usb_submit_urb(priv->urb, GFP_KERNEL);
+}
+
+static inline struct spi_tiny_usb *spi_tiny_usb_gc_to_priv(struct gpio_chip *chip)
+{
+	return container_of(chip, struct spi_tiny_usb, gpio_chip);
+}
+
+static int spi_tiny_usb_gpio_input(struct gpio_chip *chip, unsigned offset)
+{
+	struct spi_tiny_usb *priv = spi_tiny_usb_gc_to_priv(chip);
+	int ret;
+
+	if (offset == 0)
+		return -ENXIO;
+
+	ret = usb_read(priv, USB_CMD_GPIO_INPUT, 0, offset, 0, 0);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+static int spi_tiny_usb_gpio_get(struct gpio_chip *chip, unsigned offset)
+{
+	struct spi_tiny_usb *priv = spi_tiny_usb_gc_to_priv(chip);
+	int ret, retval;
+
+	char *rxbuf = kmalloc(1, GFP_KERNEL);
+	if (!rxbuf)
+		return -ENOMEM;
+	ret = usb_read(priv, USB_CMD_GPIO_GET, 0, offset, rxbuf, 1);
+	retval = rxbuf[0] ? 1 : 0;
+	kfree(rxbuf);
+	if (ret < 0)
+		return ret;
+
+	return retval;
+}
+
+static int spi_tiny_usb_gpio_output(struct gpio_chip *chip, unsigned offset, int val)
+{
+	struct spi_tiny_usb *priv = spi_tiny_usb_gc_to_priv(chip);
+	int ret;
+
+	ret = usb_read(priv, USB_CMD_GPIO_OUTPUT, 0, offset, 0, 0);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+static void spi_tiny_usb_gpio_set(struct gpio_chip *chip, unsigned offset, int val)
+{
+	struct spi_tiny_usb *priv = spi_tiny_usb_gc_to_priv(chip);
+
+	usb_read(priv, USB_CMD_GPIO_SET, val, offset, 0, 0);
 }
 
 static int spi_tiny_usb_probe(struct usb_interface *interface,
@@ -241,6 +303,7 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 	priv->spidev = spi_new_device(priv->master, &priv->info);
 	if (!priv->spidev)
 		goto error2;
+	dev_info(&interface->dev, "added new SPI device\n");
 
 	// UIO
 	priv->uio = kzalloc(sizeof(struct uio_info), GFP_KERNEL);
@@ -259,6 +322,7 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 
 	if (uio_register_device(&interface->dev, priv->uio))
 		goto error2;
+	dev_info(&interface->dev, "registered new UIO device\n");
 
 	// USB interrupt
 	priv->urb = usb_alloc_urb(0, GFP_KERNEL);
@@ -274,13 +338,36 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 	ret = usb_submit_urb(priv->urb, GFP_KERNEL);
 	if (ret)
 		goto error2;
+	dev_info(&interface->dev, "started USB interrupts handler\n");
+
+	// GPIOs
+	memset(&priv->gpio_chip, 0x00, sizeof(priv->gpio_chip));
+	priv->gpio_chip.owner = THIS_MODULE;
+	priv->gpio_chip.dev = &interface->dev;
+	priv->gpio_chip.label = dev_name(priv->gpio_chip.dev);
+	priv->gpio_chip.direction_input = spi_tiny_usb_gpio_input;
+	priv->gpio_chip.direction_output = spi_tiny_usb_gpio_output;
+	priv->gpio_chip.get = spi_tiny_usb_gpio_get;
+	priv->gpio_chip.set = spi_tiny_usb_gpio_set;
+	priv->gpio_chip.base = 0;
+	priv->gpio_chip.ngpio = 2;
+	priv->gpio_chip.names = gpio_names;
+
+	ret = gpiochip_add(&priv->gpio_chip);
+	if (ret) {
+		printk(KERN_DEBUG "err %d\n", ret);
+		goto error2;
+	}
+	dev_info(&interface->dev, "added GPIO interface\n");
 
 	return 0;
 
  error2:
+	printk(KERN_DEBUG "error2\n");
 	spi_master_put(priv->master);
 
  error:
+	printk(KERN_DEBUG "error\n");
 	if (priv)
 		spi_tiny_usb_free(priv);
 
@@ -290,6 +377,8 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 static void spi_tiny_usb_disconnect(struct usb_interface *interface)
 {
 	struct spi_tiny_usb *priv = usb_get_intfdata(interface);
+
+	gpiochip_remove(&priv->gpio_chip);
 
 	usb_kill_urb(priv->urb);
 
