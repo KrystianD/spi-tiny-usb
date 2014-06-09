@@ -51,14 +51,14 @@ struct spi_tiny_usb {
 	struct spi_device *spidev;
 	struct spi_board_info info;
 	struct uio_info *uio;
+	struct urb *urb;
+	char *urbBuffer;
 };
 
 static int
-usb_read(struct spi_master *master, int cmd, int value, int index,
-	 void *data, int len)
+usb_read(struct spi_master *master, int cmd, int value, int index, void *data, int len)
 {
-	struct spi_tiny_usb *dev =
-	    (struct spi_tiny_usb *)master->dev.platform_data;
+	struct spi_tiny_usb *dev = (struct spi_tiny_usb *)master->dev.platform_data;
 
 	/* do control transfer */
 	return usb_control_msg(dev->usb_dev, usb_rcvctrlpipe(dev->usb_dev, 0),
@@ -68,11 +68,9 @@ usb_read(struct spi_master *master, int cmd, int value, int index,
 }
 
 static int
-usb_write(struct spi_master *master, int cmd, int value, int index,
-	  void *data, int len)
+usb_write(struct spi_master *master, int cmd, int value, int index, void *data, int len)
 {
-	struct spi_tiny_usb *dev =
-	    (struct spi_tiny_usb *)master->dev.platform_data;
+	struct spi_tiny_usb *dev = (struct spi_tiny_usb *)master->dev.platform_data;
 
 	/* do control transfer */
 	return usb_control_msg(dev->usb_dev, usb_sndctrlpipe(dev->usb_dev, 0),
@@ -86,24 +84,6 @@ static void spi_tiny_usb_free(struct spi_tiny_usb *dev)
 	kfree(dev);
 }
 
-static int spi_tiny_usb_setup(struct spi_device *spi)
-{
-	dev_dbg(&spi->dev, "spi_tiny_usb_setup\n");
-	return 0;
-}
-
-static int spi_tiny_usb_prepare_xfer(struct spi_master *master)
-{
-	dev_dbg(&master->dev, "spi_tiny_usb_prepare_xfer\n");
-	return 0;
-}
-
-static int spi_tiny_usb_unprepare_xfer(struct spi_master *master)
-{
-	dev_dbg(&master->dev, "spi_tiny_usb_unprepare_xfer\n");
-	return 0;
-}
-
 static int spi_tiny_usb_freqtodiv(int freq)
 {
 	int div = 48 * 1000 * 1000 / freq;
@@ -114,15 +94,13 @@ static int spi_tiny_usb_freqtodiv(int freq)
 	return divVal;
 }
 
-static int
-spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *m)
+static int spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *m)
 {
 	// struct spi_tiny_usb *priv = spi_master_get_devdata(master);
 	struct spi_transfer *t;
 	int spi_flags;
 	int ret = 0;
 
-	dev_dbg(&master->dev, "spi_tiny_usb_xfer_one\n");
 	m->actual_length = 0;
 
 	spi_flags = FLAGS_BEGIN;
@@ -158,13 +136,11 @@ spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *m)
 				break;
 		}
 
-		if (t->rx_buf)
-		{
+		if (t->rx_buf) {
 			ret = usb_read(master, 1, 0, 0, t->rx_buf, t->len);
 			if (ret < 0)
 				break;
 		}
-
 		// spin_lock_irqsave(&ebu_lock, flags);
 		// ret = spi_tiny_usb_xfer(m->spi, t, spi_flags);
 		// spin_unlock_irqrestore(&ebu_lock, flags);
@@ -173,6 +149,7 @@ spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *m)
 
 		if (t->delay_usecs)
 			udelay(t->delay_usecs);
+
 		spi_flags = 0;
 
 		if (t->cs_change)
@@ -192,13 +169,27 @@ static int spi_tiny_usb_irqcontrol(struct uio_info *info, s32 irq_on)
 	return 0;
 }
 
-static int
-spi_tiny_usb_probe(struct usb_interface *interface,
-		   const struct usb_device_id *id)
+static void spi_tiny_usb_urb_complete(struct urb *urb)
+{
+	struct spi_tiny_usb *priv = (struct spi_tiny_usb *)urb->context;
+	int ret;
+
+	if (urb->status == 0) {
+		uio_event_notify(priv->uio);
+		dev_dbg(&priv->interface->dev,
+			"spi_tiny_usb_urb_complete (%d) %d %d %d %d\n",
+			urb->status, priv->urbBuffer[0], priv->urbBuffer[1],
+			priv->urbBuffer[2], priv->urbBuffer[3]);
+	}
+
+	ret = usb_submit_urb(priv->urb, GFP_KERNEL);
+}
+
+static int spi_tiny_usb_probe(struct usb_interface *interface,
+			      const struct usb_device_id *id)
 {
 	struct spi_tiny_usb *priv;
-	int retval = -ENOMEM;
-	int ret;
+	int ret = -ENOMEM;
 	u16 version;
 
 	dev_dbg(&interface->dev, "probing usb device\n");
@@ -227,10 +218,10 @@ spi_tiny_usb_probe(struct usb_interface *interface,
 		goto error;
 	priv->master->mode_bits = SPI_MODE_0;
 	priv->master->flags = 0;
-	priv->master->setup = spi_tiny_usb_setup;
-	priv->master->prepare_transfer_hardware = spi_tiny_usb_prepare_xfer;
+	// priv->master->setup = spi_tiny_usb_setup;
+	// priv->master->prepare_transfer_hardware = spi_tiny_usb_prepare_xfer;
 	priv->master->transfer_one_message = spi_tiny_usb_xfer_one;
-	priv->master->unprepare_transfer_hardware = spi_tiny_usb_unprepare_xfer;
+	// priv->master->unprepare_transfer_hardware = spi_tiny_usb_unprepare_xfer;
 	priv->master->dev.of_node = interface->dev.of_node;
 	priv->master->num_chipselect = 1;
 	priv->master->max_speed_hz = 48 * 1000 * 1000 / 2;
@@ -256,7 +247,7 @@ spi_tiny_usb_probe(struct usb_interface *interface,
 	if (!priv->uio)
 		goto error2;
 	priv->uio->priv = priv;
-	priv->uio->name = "kd";
+	priv->uio->name = "spi-tiny-usb";
 	priv->uio->version = "1.0.0";
 
 	priv->uio->mem[0].size = 0;
@@ -267,12 +258,24 @@ spi_tiny_usb_probe(struct usb_interface *interface,
 	priv->uio->irqcontrol = spi_tiny_usb_irqcontrol;
 
 	if (uio_register_device(&interface->dev, priv->uio))
-		goto error3;
+		goto error2;
+
+	// USB interrupt
+	priv->urb = usb_alloc_urb(0, GFP_KERNEL);
+	if (!priv->urb)
+		goto error2;
+
+	priv->urbBuffer = kmalloc(64, GFP_KERNEL);
+
+	usb_fill_int_urb(priv->urb, priv->usb_dev,
+			 usb_rcvintpipe(priv->usb_dev, 1), priv->urbBuffer, 64,
+			 spi_tiny_usb_urb_complete, priv, 10);
+
+	ret = usb_submit_urb(priv->urb, GFP_KERNEL);
+	if (ret)
+		goto error2;
 
 	return 0;
-
- error3:
-	kfree(priv->uio);
 
  error2:
 	spi_master_put(priv->master);
@@ -281,17 +284,28 @@ spi_tiny_usb_probe(struct usb_interface *interface,
 	if (priv)
 		spi_tiny_usb_free(priv);
 
-	return retval;
+	return ret;
 }
 
 static void spi_tiny_usb_disconnect(struct usb_interface *interface)
 {
-	struct spi_tiny_usb *dev = usb_get_intfdata(interface);
+	struct spi_tiny_usb *priv = usb_get_intfdata(interface);
 
-	uio_unregister_device(dev->uio);
+	usb_kill_urb(priv->urb);
+
+	if (priv->urbBuffer)
+		kfree(priv->urbBuffer);
+
+	if (priv->uio) {
+		uio_unregister_device(priv->uio);
+		kfree(priv->uio);
+	}
+
+	if (priv->urb)
+		usb_free_urb(priv->urb);
 
 	usb_set_intfdata(interface, NULL);
-	spi_tiny_usb_free(dev);
+	spi_tiny_usb_free(priv);
 
 	dev_dbg(&interface->dev, "disconnected\n");
 }

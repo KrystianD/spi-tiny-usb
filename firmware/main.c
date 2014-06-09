@@ -4,6 +4,7 @@
 #include <delay.h>
 #include <myprintf.h>
 #include <kdusb.h>
+#include <linux/gpio.h>
 
 #define FLAGS_BEGIN 1
 #define FLAGS_END   2
@@ -62,6 +63,9 @@ void main()
 	IO_INPUT_PP(SPI_MISO);
 	IO_HIGH(SPI_MISO);
 	IO_HIGH(SPI_CE);
+
+	IO_INPUT_PP(SPI_IRQ);
+	IO_HIGH(SPI_IRQ);
 	
 	_delay_init();
 	IO_PUSH_PULL(LED);
@@ -73,8 +77,18 @@ void main()
 	_delay_ms(100);
 	usbConnect();
 	
+	int lastIRQ = IO_IS_HIGH(SPI_IRQ);
 	for (;;)
 	{
+		int v = IO_IS_HIGH(SPI_IRQ);
+		if (v != lastIRQ)
+		{
+			if (v == 0)
+			{
+				usbSetInterruptData(1, 0, 0);
+			}
+			lastIRQ = v;
+		}
 	}
 }
 void _errorloop()
