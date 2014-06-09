@@ -1,6 +1,8 @@
 #include <kdusb.h>
 #include "kdusb_config.h"
 
+#include "../config.h"
+
 const uint8_t USB_DeviceDescriptor[] =
 {
 	18,   /* bLength */

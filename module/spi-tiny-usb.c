@@ -24,6 +24,8 @@
 #include <linux/i2c.h>
 #include <linux/spi/spi.h>
 
+#include "../config.h"
+
 /* commands via USB, must match command ids in the firmware */
 #define CMD_ECHO		0
 #define CMD_GET_FUNC		1
@@ -151,7 +153,7 @@ static int usb_write(struct spi_master *master, int cmd,
  * bought from EZPrototypes
  */
 static const struct usb_device_id spi_tiny_usb_table[] = {
-	{ USB_DEVICE(0x16c1, 0x06db) },   /* spi-tiny-usb */
+	{ USB_DEVICE(VID, PID) },   /* spi-tiny-usb */
 	{ }                               /* Terminating entry */
 };
 
@@ -216,10 +218,10 @@ static int spi_tiny_usb_unprepare_xfer(struct spi_master *master)
 static int spi_tiny_usb_xfer_one(struct spi_master *master,
 					struct spi_message *m)
 {
-	struct spi_tiny_usb *priv = spi_master_get_devdata(master);
+	// struct spi_tiny_usb *priv = spi_master_get_devdata(master);
 	struct spi_transfer *t;
-	unsigned long spi_flags;
-	unsigned long flags;
+	// unsigned long spi_flags;
+	// unsigned long flags;
 	int ret = 0;
 
 	dev_dbg(&master->dev, "spi_tiny_usb_xfer_one\n");
@@ -233,20 +235,22 @@ static int spi_tiny_usb_xfer_one(struct spi_master *master,
 
 		dev_dbg(&master->dev, "%p %p %d %d len: %d\n", t->tx_buf, t->rx_buf, t->tx_nbits, t->rx_nbits, t->len);
 
-		void* txbuf = t->tx_buf;
-		if (!txbuf)
+		if (t->tx_buf)
 		{
-			txbuf = kmalloc(t->len, GFP_KERNEL);
+			usb_write(master, 0, 0, 0, (void*)t->tx_buf, t->len);
+		}
+		else
+		{
+			void *txbuf = kmalloc(t->len, GFP_KERNEL);
 			memset(txbuf, 0xff, t->len);
 			if (!txbuf)
 				return 1;
+			usb_write(master, 0, 0, 0, txbuf, t->len);
+			kfree(txbuf);
 		}
 
-		usb_write(master, 0, 0, 0, txbuf, t->len);
 		if (t->rx_buf)
 			usb_read(master, 1, 0, 0, t->rx_buf, t->len);
-
-
 
 		// spin_lock_irqsave(&ebu_lock, flags);
 		// ret = spi_tiny_usb_xfer(m->spi, t, spi_flags);
