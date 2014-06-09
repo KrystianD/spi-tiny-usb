@@ -100,7 +100,7 @@ static int spi_tiny_usb_prepare_xfer(struct spi_master *master)
 
 static int spi_tiny_usb_unprepare_xfer(struct spi_master *master)
 {
-	dev_dbg(&master->dev, "spi_tiny_usb_prepare_xfer\n");
+	dev_dbg(&master->dev, "spi_tiny_usb_unprepare_xfer\n");
 	return 0;
 }
 
@@ -132,35 +132,51 @@ spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *m)
 
 		spi_flags |= spi_tiny_usb_freqtodiv(t->speed_hz) << 2;
 
-		dev_dbg(&master->dev, "%p %p %d %d len: %d speed: %d flags: %d\n",
-			t->tx_buf, t->rx_buf, t->tx_nbits, t->rx_nbits, t->len,
+		dev_dbg(&master->dev,
+			"%p %p %d %d len: %d speed: %d flags: %d\n", t->tx_buf,
+			t->rx_buf, t->tx_nbits, t->rx_nbits, t->len,
 			t->speed_hz, spi_flags);
 
+		if (t->cs_change)
+			spi_flags |= FLAGS_END;
+
 		if (t->tx_buf) {
-			usb_write(master, 0, 0, spi_flags, (void *)t->tx_buf, t->len);
+			ret = usb_write(master, 0, 0, spi_flags,
+					(void *)t->tx_buf, t->len);
+			if (ret < 0)
+				break;
 		} else {
 			void *txbuf = kmalloc(t->len, GFP_KERNEL);
-			memset(txbuf, 0xff, t->len);
-			if (!txbuf)
-				return 1;
-			usb_write(master, 0, 0, spi_flags, txbuf, t->len);
+			memset(txbuf, 0x00, t->len);
+			if (!txbuf) {
+				ret = -ENOMEM;
+				break;
+			}
+			ret = usb_write(master, 0, 0, spi_flags, txbuf, t->len);
 			kfree(txbuf);
+			if (ret < 0)
+				break;
 		}
 
 		if (t->rx_buf)
-			usb_read(master, 1, 0, 0, t->rx_buf, t->len);
+		{
+			ret = usb_read(master, 1, 0, 0, t->rx_buf, t->len);
+			if (ret < 0)
+				break;
+		}
 
 		// spin_lock_irqsave(&ebu_lock, flags);
 		// ret = spi_tiny_usb_xfer(m->spi, t, spi_flags);
 		// spin_unlock_irqrestore(&ebu_lock, flags);
 
-		if (ret)
-			break;
-
 		m->actual_length += t->len;
 
-		WARN_ON(t->delay_usecs || t->cs_change);
+		if (t->delay_usecs)
+			udelay(t->delay_usecs);
 		spi_flags = 0;
+
+		if (t->cs_change)
+			spi_flags |= FLAGS_BEGIN;
 	}
 
 	m->status = ret;
