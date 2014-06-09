@@ -256,7 +256,7 @@ spi_tiny_usb_probe(struct usb_interface *interface,
 	if (!priv->uio)
 		goto error2;
 	priv->uio->priv = priv;
-	priv->uio->name = "kd";
+	priv->uio->name = "spi-tiny-usb";
 	priv->uio->version = "1.0.0";
 
 	priv->uio->mem[0].size = 0;
