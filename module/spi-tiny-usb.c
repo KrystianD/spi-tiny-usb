@@ -35,51 +35,23 @@
 
 const char *gpio_names[] = { "led", "ext" };
 
-/* ----- begin of usb layer ---------------------------------------------- */
-
-static const struct usb_device_id spi_tiny_usb_table[] = {
-	{USB_DEVICE(VID, PID)},
-	{}
-};
-
-MODULE_DEVICE_TABLE(usb, spi_tiny_usb_table);
-
 /* Structure to hold all of our device specific stuff */
 struct spi_tiny_usb {
 	struct usb_device *usb_dev;	/* the usb device for this device */
 	struct usb_interface *interface;	/* the interface for this device */
+	struct urb *urb;	/* urb for usb interrupt transfer */
+	char *urbBuffer;	/* urb incoming data buffer */
 	struct spi_master *master;	/* spi master related things */
-	struct spi_device *spidev;
-	struct spi_board_info info;
-	struct uio_info *uio;
-	struct urb *urb;
-	char *urbBuffer;
-	struct gpio_chip gpio_chip;
+	struct spi_device *spidev;	/* spi device related things */
+	struct spi_board_info info;	/* board info for spidev module */
+	struct uio_info *uio;	/* Userspace IO for interrupt management */
+	struct gpio_chip gpio_chip;	/* gpio related things */
 };
 
-static int
-usb_read(struct spi_tiny_usb *dev, int cmd, int value, int index, void *data, int len)
+static void spi_tiny_usb_free(struct spi_tiny_usb *priv)
 {
-	/* do control transfer */
-	return usb_control_msg(dev->usb_dev, usb_rcvctrlpipe(dev->usb_dev, 0),
-			       cmd,
-			       USB_TYPE_VENDOR | USB_RECIP_INTERFACE |
-			       USB_DIR_IN, value, index, data, len, 2000);
-}
-
-static int
-usb_write(struct spi_tiny_usb *dev, int cmd, int value, int index, void *data, int len)
-{
-	/* do control transfer */
-	return usb_control_msg(dev->usb_dev, usb_sndctrlpipe(dev->usb_dev, 0),
-			       cmd, USB_TYPE_VENDOR | USB_RECIP_INTERFACE,
-			       value, index, data, len, 2000);
-}
-
-static void spi_tiny_usb_free(struct spi_tiny_usb *dev)
-{
-	usb_put_dev(dev->usb_dev);
-	kfree(dev);
+	usb_put_dev(priv->usb_dev);
+	kfree(priv);
 }
 
 static int spi_tiny_usb_freqtodiv(int freq)
@@ -91,6 +63,13 @@ static int spi_tiny_usb_freqtodiv(int freq)
 			break;
 	return divVal;
 }
+
+static int
+usb_read(struct spi_tiny_usb *dev, int cmd, int value, int index, void *data, int len);
+static int
+usb_write(struct spi_tiny_usb *dev, int cmd, int value, int index, void *data, int len);
+
+/* ----- begin of spi layer ---------------------------------------------- */
 
 static int spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *m)
 {
@@ -109,9 +88,8 @@ static int spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *
 		spi_flags |= spi_tiny_usb_freqtodiv(t->speed_hz) << 2;
 
 		dev_dbg(&master->dev,
-			"%p %p %d %d len: %d speed: %d flags: %d\n", t->tx_buf,
-			t->rx_buf, t->tx_nbits, t->rx_nbits, t->len,
-			t->speed_hz, spi_flags);
+			"tx: %p rx: %p len: %d speed: %d flags: %d\n", t->tx_buf,
+			t->rx_buf, t->len, t->speed_hz, spi_flags);
 
 		if (t->cs_change)
 			spi_flags |= FLAGS_END;
@@ -166,21 +144,9 @@ static int spi_tiny_usb_irqcontrol(struct uio_info *info, s32 irq_on)
 	return 0;
 }
 
-static void spi_tiny_usb_urb_complete(struct urb *urb)
-{
-	struct spi_tiny_usb *priv = (struct spi_tiny_usb *)urb->context;
-	int ret;
+/* ----- end of spi layer ------------------------------------------------ */
 
-	if (urb->status == 0) {
-		uio_event_notify(priv->uio);
-		dev_dbg(&priv->interface->dev,
-			"spi_tiny_usb_urb_complete (%d) %d %d %d %d\n",
-			urb->status, priv->urbBuffer[0], priv->urbBuffer[1],
-			priv->urbBuffer[2], priv->urbBuffer[3]);
-	}
-
-	ret = usb_submit_urb(priv->urb, GFP_KERNEL);
-}
+/* ----- begin of gpio layer ---------------------------------------------- */
 
 static inline struct spi_tiny_usb *spi_tiny_usb_gc_to_priv(struct gpio_chip *chip)
 {
@@ -236,6 +202,52 @@ static void spi_tiny_usb_gpio_set(struct gpio_chip *chip, unsigned offset, int v
 	struct spi_tiny_usb *priv = spi_tiny_usb_gc_to_priv(chip);
 
 	usb_read(priv, USB_CMD_GPIO_SET, val, offset, 0, 0);
+}
+
+/* ----- end of gpio layer ------------------------------------------------ */
+
+/* ----- begin of usb layer ---------------------------------------------- */
+
+static const struct usb_device_id spi_tiny_usb_table[] = {
+	{USB_DEVICE(VID, PID)},
+	{}
+};
+
+MODULE_DEVICE_TABLE(usb, spi_tiny_usb_table);
+
+static void spi_tiny_usb_urb_complete(struct urb *urb)
+{
+	struct spi_tiny_usb *priv = (struct spi_tiny_usb *)urb->context;
+	int ret;
+
+	if (urb->status == 0) {
+		uio_event_notify(priv->uio);
+		dev_dbg(&priv->interface->dev,
+			"spi_tiny_usb_urb_complete (%d) %d %d %d %d\n",
+			urb->status, priv->urbBuffer[0], priv->urbBuffer[1],
+			priv->urbBuffer[2], priv->urbBuffer[3]);
+	}
+
+	ret = usb_submit_urb(priv->urb, GFP_KERNEL);
+}
+
+static int
+usb_read(struct spi_tiny_usb *dev, int cmd, int value, int index, void *data, int len)
+{
+	/* do control transfer */
+	return usb_control_msg(dev->usb_dev, usb_rcvctrlpipe(dev->usb_dev, 0),
+			       cmd,
+			       USB_TYPE_VENDOR | USB_RECIP_INTERFACE |
+			       USB_DIR_IN, value, index, data, len, 2000);
+}
+
+static int
+usb_write(struct spi_tiny_usb *dev, int cmd, int value, int index, void *data, int len)
+{
+	/* do control transfer */
+	return usb_control_msg(dev->usb_dev, usb_sndctrlpipe(dev->usb_dev, 0),
+			       cmd, USB_TYPE_VENDOR | USB_RECIP_INTERFACE,
+			       value, index, data, len, 2000);
 }
 
 static int spi_tiny_usb_probe(struct usb_interface *interface,
