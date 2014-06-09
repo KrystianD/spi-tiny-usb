@@ -23,6 +23,7 @@
 /* include interface to i2c layer */
 #include <linux/i2c.h>
 #include <linux/spi/spi.h>
+#include <linux/uio_driver.h>
 
 #include "../config.h"
 
@@ -39,17 +40,17 @@
 #define FLAGS_BEGIN 0
 #define FLAGS_END 0
 
-static int usb_read(struct spi_master *master, int cmd,
-		    int value, int index, void *data, int len);
+static int usb_read(struct spi_master *master, int cmd, int value, int index,
+										void *data, int len);
 
-static int usb_write(struct spi_master *master, int cmd,
-		     int value, int index, void *data, int len);
+static int usb_write(struct spi_master *master, int cmd, int value, int index,
+										 void *data, int len);
 
 /* ----- begin of i2c layer ---------------------------------------------- */
 
-// #define STATUS_IDLE		0
-// #define STATUS_ADDRESS_ACK	1
-// #define STATUS_ADDRESS_NAK	2
+// #define STATUS_IDLE    0
+// #define STATUS_ADDRESS_ACK 1
+// #define STATUS_ADDRESS_NAK 2
 
 // static int usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, int num)
 // {
@@ -83,8 +84,8 @@ static int usb_write(struct spi_master *master, int cmd,
 		// if (pmsg->flags & I2C_M_RD) {
 			// /* read data */
 			// if (usb_read(adapter, cmd,
-				     // pmsg->flags, pmsg->addr,
-				     // pmsg->buf, pmsg->len) != pmsg->len) {
+						 // pmsg->flags, pmsg->addr,
+						 // pmsg->buf, pmsg->len) != pmsg->len) {
 				// dev_err(&adapter->dev,
 					// "failure reading data\n");
 				// ret = -EREMOTEIO;
@@ -93,8 +94,8 @@ static int usb_write(struct spi_master *master, int cmd,
 		// } else {
 			// /* write data */
 			// if (usb_write(adapter, cmd,
-				      // pmsg->flags, pmsg->addr,
-				      // pmsg->buf, pmsg->len) != pmsg->len) {
+							// pmsg->flags, pmsg->addr,
+							// pmsg->buf, pmsg->len) != pmsg->len) {
 				// dev_err(&adapter->dev,
 					// "failure writing data\n");
 				// ret = -EREMOTEIO;
@@ -131,7 +132,7 @@ static int usb_write(struct spi_master *master, int cmd,
 
 	// /* get functionality from adapter */
 	// if (!pfunc || usb_read(adapter, CMD_GET_FUNC, 0, 0, pfunc,
-			       // sizeof(*pfunc)) != sizeof(*pfunc)) {
+						 // sizeof(*pfunc)) != sizeof(*pfunc)) {
 		// dev_err(&adapter->dev, "failure reading functionality\n");
 		// ret = 0;
 		// goto out;
@@ -153,42 +154,44 @@ static int usb_write(struct spi_master *master, int cmd,
  * bought from EZPrototypes
  */
 static const struct usb_device_id spi_tiny_usb_table[] = {
-	{ USB_DEVICE(VID, PID) },   /* spi-tiny-usb */
-	{ }                               /* Terminating entry */
+	{USB_DEVICE(VID, PID)},				/* spi-tiny-usb */
+	{}														/* Terminating entry */
 };
 
 MODULE_DEVICE_TABLE(usb, spi_tiny_usb_table);
 
 /* Structure to hold all of our device specific stuff */
-struct spi_tiny_usb {
-	struct usb_device *usb_dev; /* the usb device for this device */
-	struct usb_interface *interface; /* the interface for this device */
-	struct i2c_adapter adapter; /* i2c related things */
-	struct spi_master *master; /* i2c related things */
+struct spi_tiny_usb
+{
+	struct usb_device *usb_dev;		/* the usb device for this device */
+	struct usb_interface *interface;	/* the interface for this device */
+	struct i2c_adapter adapter;		/* i2c related things */
+	struct spi_master *master;		/* i2c related things */
 	struct spi_device *spidev;
-	struct spi_board_info	info;
+	struct spi_board_info info;
+	struct uio_info *uio;
 };
 
-static int usb_read(struct spi_master *master, int cmd,
-		    int value, int index, void *data, int len)
+static int usb_read(struct spi_master *master, int cmd, int value, int index,
+										void *data, int len)
 {
 	struct spi_tiny_usb *dev = (struct spi_tiny_usb *)master->dev.platform_data;
 
 	/* do control transfer */
-	return usb_control_msg(dev->usb_dev, usb_rcvctrlpipe(dev->usb_dev, 0),
-			       cmd, USB_TYPE_VENDOR | USB_RECIP_INTERFACE |
-			       USB_DIR_IN, value, index, data, len, 2000);
+	return usb_control_msg(dev->usb_dev, usb_rcvctrlpipe(dev->usb_dev, 0), cmd,
+												 USB_TYPE_VENDOR | USB_RECIP_INTERFACE | USB_DIR_IN,
+												 value, index, data, len, 2000);
 }
 
-static int usb_write(struct spi_master *master, int cmd,
-		     int value, int index, void *data, int len)
+static int usb_write(struct spi_master *master, int cmd, int value, int index,
+										 void *data, int len)
 {
 	struct spi_tiny_usb *dev = (struct spi_tiny_usb *)master->dev.platform_data;
 
 	/* do control transfer */
-	return usb_control_msg(dev->usb_dev, usb_sndctrlpipe(dev->usb_dev, 0),
-			       cmd, USB_TYPE_VENDOR | USB_RECIP_INTERFACE,
-			       value, index, data, len, 2000);
+	return usb_control_msg(dev->usb_dev, usb_sndctrlpipe(dev->usb_dev, 0), cmd,
+												 USB_TYPE_VENDOR | USB_RECIP_INTERFACE, value, index,
+												 data, len, 2000);
 }
 
 static void spi_tiny_usb_free(struct spi_tiny_usb *dev)
@@ -216,7 +219,7 @@ static int spi_tiny_usb_unprepare_xfer(struct spi_master *master)
 }
 
 static int spi_tiny_usb_xfer_one(struct spi_master *master,
-					struct spi_message *m)
+																 struct spi_message *m)
 {
 	// struct spi_tiny_usb *priv = spi_master_get_devdata(master);
 	struct spi_transfer *t;
@@ -229,15 +232,17 @@ static int spi_tiny_usb_xfer_one(struct spi_master *master,
 	m->actual_length = 0;
 
 	// spi_flags = FALCON_SPI_XFER_BEGIN;
-	list_for_each_entry(t, &m->transfers, transfer_list) {
+	list_for_each_entry(t, &m->transfers, transfer_list)
+	{
 		// if (list_is_last(&t->transfer_list, &m->transfers))
 		// spi_flags |= FALCON_SPI_XFER_END;
 
-		dev_dbg(&master->dev, "%p %p %d %d len: %d\n", t->tx_buf, t->rx_buf, t->tx_nbits, t->rx_nbits, t->len);
+		dev_dbg(&master->dev, "%p %p %d %d len: %d\n", t->tx_buf, t->rx_buf,
+						t->tx_nbits, t->rx_nbits, t->len);
 
 		if (t->tx_buf)
 		{
-			usb_write(master, 0, 0, 0, (void*)t->tx_buf, t->len);
+			usb_write(master, 0, 0, 0, (void *)t->tx_buf, t->len);
 		}
 		else
 		{
@@ -271,8 +276,20 @@ static int spi_tiny_usb_xfer_one(struct spi_master *master,
 	return 0;
 }
 
+static int spi_tiny_usb_irqcontrol(struct uio_info *info, s32 irq_on)
+{
+	struct spi_tiny_usb *priv = (struct spi_tiny_usb *)info->priv;
+	dev_dbg(&info->dev, "spi_tiny_usb_xfer_one\n");
+	// if (irq_on == 0)
+		// mf624_disable_interrupt(ALL, info);
+	// else if (irq_on == 1)
+		// mf624_enable_interrupt(ALL, info);
+
+	return 0;
+}
+
 static int spi_tiny_usb_probe(struct usb_interface *interface,
-		const struct usb_device_id *id)
+															const struct usb_device_id *id)
 {
 	struct spi_tiny_usb *priv;
 	int retval = -ENOMEM;
@@ -283,10 +300,10 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 
 	/* allocate memory for our device state and initialize it */
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
-	if (priv == NULL) {
-		dev_err(&interface->dev, "Out of memory\n");
-		goto error;
-	}
+	if (priv == NULL)
+		return -ENOMEM;
+
+
 
 	priv->master = 0;
 
@@ -296,22 +313,19 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 	/* save our data pointer in this interface device */
 	usb_set_intfdata(interface, priv);
 
-
-
 	version = le16_to_cpu(priv->usb_dev->descriptor.bcdDevice);
-	dev_info(&interface->dev,
-			"version %x.%02x found at bus %03d address %03d\n",
-			version >> 8, version & 0xff,
-			priv->usb_dev->bus->busnum, priv->usb_dev->devnum);
+	dev_info(&interface->dev, "version %x.%02x found at bus %03d address %03d\n",
+					 version >> 8, version & 0xff, priv->usb_dev->bus->busnum,
+					 priv->usb_dev->devnum);
+
+
+	dev_info(&interface->dev, "connected spi-tiny-usb device\n");
 
 	priv->master = spi_alloc_master(&interface->dev, sizeof(*priv));
 	if (!priv->master)
 		return -ENOMEM;
-
-	dev_info(&interface->dev, "connected spi-tiny-usb device\n");
-
 	priv->master->mode_bits = SPI_MODE_0;
-	priv->master->flags = 0;//SPI_MASTER_HALF_DUPLEX;
+	priv->master->flags = 0;			//SPI_MASTER_HALF_DUPLEX;
 	priv->master->setup = spi_tiny_usb_setup;
 	priv->master->prepare_transfer_hardware = spi_tiny_usb_prepare_xfer;
 	priv->master->transfer_one_message = spi_tiny_usb_xfer_one;
@@ -338,6 +352,19 @@ static int spi_tiny_usb_probe(struct usb_interface *interface,
 
 	dev_dbg(&interface->dev, "reg2 %p\n", priv->spidev);
 
+	// UIO
+	priv->uio = kzalloc(sizeof(struct uio_info), GFP_KERNEL);
+	if (!priv->uio)
+		return -ENOMEM;
+	priv->uio->priv = priv;
+	priv->uio->irq = UIO_IRQ_CUSTOM;
+	priv->uio->irq_flags = IRQF_SHARED;
+	priv->uio->handler = 0;
+	priv->uio->irqcontrol = 0;
+
+	if (uio_register_device(&interface->dev, priv->uio))
+		goto error2;
+
 	return 0;
 
 error2:
@@ -354,6 +381,8 @@ static void spi_tiny_usb_disconnect(struct usb_interface *interface)
 {
 	struct spi_tiny_usb *dev = usb_get_intfdata(interface);
 
+	uio_unregister_device(dev->uio);
+
 	usb_set_intfdata(interface, NULL);
 	spi_tiny_usb_free(dev);
 
@@ -361,10 +390,10 @@ static void spi_tiny_usb_disconnect(struct usb_interface *interface)
 }
 
 static struct usb_driver spi_tiny_usb_driver = {
-	.name		= "spi-tiny-usb",
-	.probe		= spi_tiny_usb_probe,
-	.disconnect	= spi_tiny_usb_disconnect,
-	.id_table	= spi_tiny_usb_table,
+	.name = "spi-tiny-usb",
+	.probe = spi_tiny_usb_probe,
+	.disconnect = spi_tiny_usb_disconnect,
+	.id_table = spi_tiny_usb_table,
 };
 
 module_usb_driver(spi_tiny_usb_driver);
