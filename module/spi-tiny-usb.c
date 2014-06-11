@@ -88,8 +88,8 @@ static int spi_tiny_usb_xfer_one(struct spi_master *master, struct spi_message *
 		spi_flags |= spi_tiny_usb_freqtodiv(t->speed_hz) << 2;
 
 		dev_dbg(&master->dev,
-			"tx: %p rx: %p len: %d speed: %d flags: %d\n", t->tx_buf,
-			t->rx_buf, t->len, t->speed_hz, spi_flags);
+			"tx: %p rx: %p len: %d speed: %d flags: %d delay: %d\n", t->tx_buf,
+			t->rx_buf, t->len, t->speed_hz, spi_flags, t->delay_usecs);
 
 		if (t->cs_change)
 			spi_flags |= FLAGS_END;

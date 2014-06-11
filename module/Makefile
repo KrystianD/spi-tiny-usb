@@ -1,7 +1,11 @@
+
 obj-m += spi-tiny-usb.o
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+
+debug:
+	KCPPFLAGS="-DDEBUG" make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
